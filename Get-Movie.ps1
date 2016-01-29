@@ -53,14 +53,19 @@ function Generate-NMPSInventory {
     #for testing
     $counter = 0
     foreach($row in $source_csv) {
+        $skip = $false
+        
+        ###DEBUG CODE###
         if($counter -eq $limit) {
             Write-Warning ("Limit reached - halting processing")
             break
         }
+        #Write status message every 50 records
         if($counter % 50 -eq 0) {
-            #Write status message every 50 records
             Write-Warning ("Processing Record $counter")
         }
+        ###END DEBUG CODE###
+        
         $title = $row.Title
         $proc = 'true'
 
@@ -68,9 +73,7 @@ function Generate-NMPSInventory {
         {
             #Assume we have already processed this title and skip the lookup
             $output += $row
-            continue
-            
-            #$metadata = $row
+            $skip = $true
         }
         elseif ($row.imdbID) {
             #Check for a manually entered imdbID (for manual fix of bad titles)
@@ -89,23 +92,24 @@ function Generate-NMPSInventory {
         }
         elseif($row.Title -ne $metadata.Title) {
             $warn_title = $metadata.Title
-            Write-Verbose ("Title mismatch $Title (original) >> $warn_title (lookup)") 
+            Write-Verbose ("Title mismatch record#($counter) :: $Title (original) >> $warn_title (lookup)") 
             $title = $metadata.Title
         }
-     
-        $properties = [Ordered] @{
-            "ID" = $row.ID;
-            "imdbID" = $metadata.imdbID;
-            "IMDB Link" = '';
-            "TITLE" = $title;
-            "RATED" = $metadata.Rated;
-            "EXPIRATION" = '="' + $row.EXPIRATION + '"'; #Preserve the NMPS Expiration code
-            "IMDB RATING" = $metadata.imdbRating;
-            "GENRE" = $metadata.Genre;
-            "PLOT" = $metadata.Plot;
-            "PROCESSED" = $proc
+        if(-not $skip) {
+            $properties = [Ordered] @{
+                "ID" = $row.ID;
+                "imdbID" = $metadata.imdbID;
+                "IMDB Link" = '';
+                "TITLE" = $title;
+                "RATED" = $metadata.Rated;
+                "EXPIRATION" = '="' + $row.EXPIRATION + '"'; #Preserve the NMPS Expiration code
+                "IMDB RATING" = $metadata.imdbRating;
+                "GENRE" = $metadata.Genre;
+                "PLOT" = $metadata.Plot;
+                "PROCESSED" = $proc
+            }
+            $output += New-Object -TypeName psobject -Property $properties
         }
-        $output += New-Object -TypeName psobject -Property $properties
         $counter++
     }
     #Push it to the pipeline
