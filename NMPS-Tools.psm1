@@ -31,36 +31,42 @@ function Get-Movie {
     ConvertFrom-Json -InputObject $web_result.Content
 }
 
-
 <#
 
 #>
-function Generate-NMPSInventory {
+function Export-NMPSInventory {
     param (
-        [Parameter(Mandatory=$true)]
-        [String]$src,
-        [Int]$limit = -1,
-        [Switch]$Reprocess = $false
+        [Parameter(Mandatory=$true,Position=0)]
+        [String]$Source,
+        [Parameter(Mandatory=$true,Position=1)]
+        [String]$Destination,
+        [Switch]$Append,
+        [Switch]$Reprocess,
+        [Switch]$Overwrite = $True,
+        [Switch]$WriteErrors = $True,
+        [Int]$limit = -1
     )
-    Write-Verbose $src
-    $source_csv = Import-Csv -Path $src
+    Write-Verbose $Source
+    $source_csv = Import-Csv -Path $Source
+    $records = $source_csv.length
 
     $output = @()
 
-    #for testing
+    if($WriteErrors) {
+        $log = New-Item -Path (Split-Path $Destination) -Name 'nmpserror.log' -ItemType File -Force
+        "NMPS Error Log" > $log
+    }
+
     $counter = 0
+    Write-Verbose "Init: Counter = $counter"
     foreach($row in $source_csv) {
-        #####
-        #TESTING BLOCK
-        #####
+        #Artificially limit #of lookups to perform
         if($counter -eq $limit) {
-            Write-Warning ("Limit reached - halting processing")
+            Write-Warning ("Limit reached - halting processing Counter=$counter")
             break
         }
-        if($counter % 50 -eq 0) {
-            #Write status message every 50 records
-            Write-Warning ("Processing Record $counter")
-        }
+                
+        Write-progress -Activity "Movie Lookup" -Status "Processing record $counter of $records" -PercentComplete ([int]($counter/$records * 100))
 
         ######
         #Actual Logic
@@ -70,6 +76,7 @@ function Generate-NMPSInventory {
 
         #Check if this row has already been processed (and reprocess flag isn't set)
         if(-Not $Reprocess -and ($row.PROCESSED -eq 'true')) {
+            Write-Verbose "Already processed record $($row.Title)"
             $metadata = $row
             #continue
         }
@@ -85,33 +92,45 @@ function Generate-NMPSInventory {
 
         if($metadata.Error) {
             $Processed = 'Lookup Error'
-            Write-Warning ("Error looking up $title")
+            $Message = "LOOKUP::Error looking up Title: {0}, NMPS ID#: {1}" -f $row.Title,$row.ID
+            if($log) {
+                $Message >> $log
+            }
+            Write-Warning $Message
         }
         elseif($row.Title -ne $metadata.Title) {
-            $warn_title = $metadata.Title
-            Write-Verbose ("Title mismatch $Title (original) >> $warn_title (lookup)") 
-            #TODO: Write relevent info out to an error.log
-
-            $title = $metadata.Title
+            $Message = "MISMATCH::Title mismatch between original:{0} and API lookup:{1}. NMPS ID#{2}" -f $Title,$($metadata.title),$row.ID
+            if($log) {
+                $Message >> $log
+            }
+            
+            Write-Warning $Message
+            $Title = $metadata.Title
         }
      
         $properties = [Ordered] @{
             "ID" = $row.ID;
             "imdbID" = $metadata.imdbID;
-            "IMDB Link" = '';
+            "IMDBLink" = '';
             "TITLE" = $Title;
             "RATED" = $metadata.Rated;
             "EXPIRATION" = '="' + $row.EXPIRATION + '"'; #Preserve the NMPS Expiration code
-            "IMDB RATING" = $metadata.imdbRating;
+            "IMDBRATING" = $metadata.imdbRating;
             "GENRE" = $metadata.Genre;
             "PLOT" = $metadata.Plot;
             "PROCESSED" = $Processed
         }
-        $output += New-Object -TypeName psobject -Property $properties
+        $output_obj = New-Object -TypeName psobject -Property $properties
+        #Append on the fly, or wait til processing is complete to export
+        if($Append) {
+            $output_obj | Export-CSv -path $Destination -Append -NoTypeInformation -Force:$Overwrite
+        } 
+        $output += $output_obj
         $counter++
     }
-    $output
+    if(-not $Append) {
+        $output | Export-CSV -Path $Destination -NoTypeInformation -Force:$Overwrite
+    }
 }
 
-Export-ModuleMember -Function 'Generate-NMPSInventory'
-#Generate-NMPSInventory -Input 'C:\Dev\Powershell\NMPSDecember2015Inventory.csv' -Verbose | Export-Csv -Path 'C:\Dev\Powershell\test_export.csv' -Force -NoTypeInformation
+Export-ModuleMember -Function 'Export-NMPSInventory'
